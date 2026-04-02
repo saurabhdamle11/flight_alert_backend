@@ -1,7 +1,6 @@
 package com.tracker.tracker_backend.controller;
 
-import com.tracker.tracker_backend.service.WhatsAppService;
-import org.springframework.beans.factory.annotation.Value;
+import com.tracker.tracker_backend.service.WebhookConversationService;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -13,25 +12,10 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/webhook/twilio")
 public class TwilioWebhookController {
 
-    private final WhatsAppService whatsAppService;
+    private final WebhookConversationService conversationService;
 
-    @Value("${sample.flight.callsign}")
-    private String callsign;
-
-    @Value("${sample.flight.altitude-ft}")
-    private int altitudeFt;
-
-    @Value("${sample.flight.speed-kmph}")
-    private int speedKmph;
-
-    @Value("${sample.flight.direction}")
-    private String direction;
-
-    @Value("${sample.flight.fr24-code}")
-    private String fr24Code;
-
-    public TwilioWebhookController(WhatsAppService whatsAppService) {
-        this.whatsAppService = whatsAppService;
+    public TwilioWebhookController(WebhookConversationService conversationService) {
+        this.conversationService = conversationService;
     }
 
     @PostMapping(
@@ -41,22 +25,15 @@ public class TwilioWebhookController {
     )
     public ResponseEntity<String> handleIncoming(
             @RequestParam("From") String from,
-            @RequestParam("Body") String body
+            @RequestParam(value = "Body", required = false, defaultValue = "") String body,
+            @RequestParam(value = "Latitude", required = false) Double latitude,
+            @RequestParam(value = "Longitude", required = false) Double longitude
     ) {
-        String message = buildFlightStatus();
-        whatsAppService.sendMessage(from, message);
+        conversationService.handle(from, body, latitude, longitude);
 
-        // Return an empty TwiML response — the actual reply is sent via the REST API above.
+        // Empty TwiML — reply is sent via the REST API in WebhookConversationService.
         return ResponseEntity.ok()
                 .contentType(MediaType.TEXT_XML)
                 .body("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response/>");
-    }
-
-    private String buildFlightStatus() {
-        return "Flight overhead: " + callsign + "\n" +
-               "Altitude: " + String.format("%,d", altitudeFt) + " ft\n" +
-               "Speed: " + speedKmph + " km/h\n" +
-               "Direction: " + direction + "\n" +
-               "Track it: https://www.flightradar24.com/" + fr24Code;
     }
 }

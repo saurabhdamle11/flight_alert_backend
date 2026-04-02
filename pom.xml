@@ -80,6 +80,10 @@
 			<artifactId>twilio</artifactId>
 			<version>10.4.1</version>
 		</dependency>
+		<dependency>
+			<groupId>org.springframework.kafka</groupId>
+			<artifactId>spring-kafka</artifactId>
+		</dependency>
 	</dependencies>
 
 	<build>

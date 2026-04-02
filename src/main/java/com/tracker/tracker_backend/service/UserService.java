@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -81,6 +82,33 @@ public class UserService {
             throw new UserNotFoundException(userId);
         }
         userRepository.deleteById(userId);
+    }
+
+    public Optional<User> findByWhatsappNumber(String whatsappNumber) {
+        return userRepository.findByWhatsappNumber(whatsappNumber);
+    }
+
+    @Transactional
+    public User registerFromWhatsapp(String whatsappNumber) {
+        User user = new User();
+        user.setWhatsappNumber(whatsappNumber);
+        return userRepository.save(user);
+    }
+
+    @Transactional
+    public void addLocationFromPoint(User user, double lat, double lon) {
+        // ~25 km radius bounding box
+        double deltaLat = 25.0 / 111.0;
+        double deltaLon = 25.0 / (111.0 * Math.cos(Math.toRadians(lat)));
+
+        UserLocation loc = new UserLocation();
+        loc.setUser(user);
+        loc.setLabel("home");
+        loc.setLatMin(lat - deltaLat);
+        loc.setLatMax(lat + deltaLat);
+        loc.setLonMin(lon - deltaLon);
+        loc.setLonMax(lon + deltaLon);
+        userLocationRepository.save(loc);
     }
 
     // -------------------------------------------------------------------------
