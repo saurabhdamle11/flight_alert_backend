@@ -1,4 +1,4 @@
-# Flight Whisperer — Backend
+# Flight Whisperer Backend
 
 Multi-user flight notification service. Users register with a WhatsApp number and location; the system watches for planes overhead and sends WhatsApp notifications with flight details.
 
@@ -46,40 +46,58 @@ WhatsApp (Twilio Webhook) → User Service → PostgreSQL
 
 - Java 17+
 - Maven (or use the included `./mvnw` wrapper)
-- Docker (for PostgreSQL and Redis)
+- Docker + Docker Compose
 
 ---
 
 ## Quick Start
 
-### 1. Start PostgreSQL and Redis
+### 1. Start all infrastructure
+
+A `docker-compose.yml` at the repo root starts PostgreSQL, Redis, Zookeeper, and Kafka together:
 
 ```bash
-docker run -d --name postgres-dev \
-  -e POSTGRES_USER=<DB_USERNAME> \
-  -e POSTGRES_PASSWORD=<DB_PASSWORD> \
-  -e POSTGRES_DB=flight_whisperer \
-  -p 5432:5432 postgres:15
-
-docker run -d --name flight-whisperer-redis \
-  -p 6379:6379 redis:7
+# From the repo root (tracker_backend/)
+docker compose up -d
 ```
 
-### 2. Configure environment
+This starts:
+- PostgreSQL 16 on port 5432
+- Redis 7 on port 6379
+- Zookeeper on port 2181
+- Kafka on port 9092
+
+### 2. Run Flyway migrations
+
+> **Note:** Spring Boot 4.1 SNAPSHOT does not auto-run Flyway on startup. Migrations must be applied manually each time the PostgreSQL container is recreated.
 
 ```bash
-cp ../.env.example ../.env
-# Fill in your values in .env
+# From tracker_backend/tracker_backend/
+for f in src/main/resources/db/migration/V1__create_users.sql \
+          src/main/resources/db/migration/V2__create_user_locations.sql \
+          src/main/resources/db/migration/V3__create_notifications.sql \
+          src/main/resources/db/migration/V4__create_regions.sql; do
+  docker exec -i tracker_backend-postgres-1 psql -U tracker -d flight_whisperer < "$f"
+done
 ```
 
-### 3. Run the app
+### 3. Configure environment
+
+The `.env` file must live at `tracker_backend/tracker_backend/.env` (same directory as `pom.xml`):
 
 ```bash
-set -a && source ../.env && set +a
+cp .env.example .env
+# Fill in your Twilio credentials and any overrides
+```
+
+### 4. Run the app
+
+```bash
+# From tracker_backend/tracker_backend/
 ./mvnw spring-boot:run
 ```
 
-The service starts on **http://localhost:8080**.
+The service starts on **http://localhost:8080**. Kafka topics are created automatically on first startup.
 
 ---
 
@@ -94,6 +112,10 @@ All config is driven by environment variables. Copy `.env.example` to `.env` to 
 | `DB_PASSWORD` | Database password |
 | `REDIS_HOST` | Redis host |
 | `REDIS_PORT` | Redis port |
+| `KAFKA_BOOTSTRAP_SERVERS` | Kafka broker address (default: `localhost:9092`) |
+| `TWILIO_ACCOUNT_SID` | Twilio account SID |
+| `TWILIO_AUTH_TOKEN` | Twilio auth token |
+| `TWILIO_WHATSAPP_FROM` | Twilio WhatsApp sender number (e.g. `whatsapp:+14155238886`) |
 
 ---
 
@@ -116,11 +138,12 @@ Deduplication is handled in Redis (`seen:flight:{user_id}:{icao24}`, TTL 600 s) 
 
 ```
 src/main/java/com/tracker/
-├── controller/         # REST endpoints
-├── service/            # Business logic
+├── config/             # Kafka, Jackson, Twilio configuration
+├── controller/         # REST endpoints + Twilio webhook
+├── service/            # Business logic, Kafka consumers
 ├── repository/         # JPA repositories
 ├── entity/             # JPA entities
-├── dto/                # Request/response objects
+├── dto/                # Request/response/Kafka message objects
 └── exception/          # Global error handling
 ```
 
