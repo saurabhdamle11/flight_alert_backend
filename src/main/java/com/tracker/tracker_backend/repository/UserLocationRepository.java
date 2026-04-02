@@ -20,4 +20,12 @@ public interface UserLocationRepository extends JpaRepository<UserLocation, UUID
               AND ul.lonMin <= :lon AND ul.lonMax >= :lon
             """)
     List<UserLocation> findActiveLocationsContaining(double lat, double lon);
+
+    @Query("""
+            SELECT ul FROM UserLocation ul
+            JOIN FETCH ul.user u
+            WHERE ul.active = true
+              AND u.active = true
+            """)
+    List<UserLocation> findAllActiveWithUser();
 }
