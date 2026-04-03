@@ -3,6 +3,7 @@ package com.tracker.tracker_backend.repository;
 import com.tracker.tracker_backend.entity.UserLocation;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.UUID;
@@ -28,4 +29,13 @@ public interface UserLocationRepository extends JpaRepository<UserLocation, UUID
               AND u.active = true
             """)
     List<UserLocation> findAllActiveWithUser();
+
+    @Query("""
+            SELECT ul FROM UserLocation ul
+            JOIN FETCH ul.user u
+            WHERE ul.active = true
+              AND u.active = true
+              AND ul.h3Index IN :cells
+            """)
+    List<UserLocation> findActiveLocationsInCells(@Param("cells") List<Long> cells);
 }

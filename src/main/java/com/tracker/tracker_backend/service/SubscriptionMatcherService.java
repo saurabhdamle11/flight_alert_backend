@@ -37,6 +37,7 @@ public class SubscriptionMatcherService {
     private static final String DEDUP_KEY_PREFIX = "seen:";
 
     private final UserLocationRepository userLocationRepository;
+    private final H3IndexService h3IndexService;
     private final StringRedisTemplate redisTemplate;
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
@@ -72,8 +73,14 @@ public class SubscriptionMatcherService {
             return;
         }
 
-        List<UserLocation> matches = userLocationRepository
-                .findActiveLocationsContaining(update.latitude(), update.longitude());
+        // Coarse filter: fetch only user locations whose H3 cell is within kRing of the flight.
+        // Fine filter: confirm the flight's exact lat/lon falls inside the user's bounding box.
+        List<Long> cells = h3IndexService.neighborCells(update.latitude(), update.longitude());
+        List<UserLocation> matches = userLocationRepository.findActiveLocationsInCells(cells)
+                .stream()
+                .filter(ul -> update.latitude()  >= ul.getLatMin() && update.latitude()  <= ul.getLatMax()
+                           && update.longitude() >= ul.getLonMin() && update.longitude() <= ul.getLonMax())
+                .toList();
 
         log.info("Flight {} matched {} user location(s)", update.icao24(), matches.size());
 

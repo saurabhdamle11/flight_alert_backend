@@ -76,7 +76,8 @@ This starts:
 for f in src/main/resources/db/migration/V1__create_users.sql \
           src/main/resources/db/migration/V2__create_user_locations.sql \
           src/main/resources/db/migration/V3__create_notifications.sql \
-          src/main/resources/db/migration/V4__create_regions.sql; do
+          src/main/resources/db/migration/V4__create_regions.sql \
+          src/main/resources/db/migration/V5__add_h3_index_to_user_locations.sql; do
   docker exec -i tracker_backend-postgres-1 psql -U tracker -d flight_whisperer < "$f"
 done
 ```

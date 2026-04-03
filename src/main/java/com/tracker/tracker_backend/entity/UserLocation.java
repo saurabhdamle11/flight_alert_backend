@@ -41,6 +41,9 @@ public class UserLocation {
     @Column(name = "region_id")
     private UUID regionId;
 
+    @Column(name = "h3_index")
+    private Long h3Index;
+
     @Column(name = "is_active", nullable = false)
     private boolean active = true;
 

@@ -22,6 +22,7 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final UserLocationRepository userLocationRepository;
+    private final H3IndexService h3IndexService;
 
     @Transactional
     public UserResponse createUser(CreateUserRequest req) {
@@ -44,6 +45,9 @@ public class UserService {
             loc.setLatMax(req.location().latMax());
             loc.setLonMin(req.location().lonMin());
             loc.setLonMax(req.location().lonMax());
+            double centerLat = (req.location().latMin() + req.location().latMax()) / 2.0;
+            double centerLon = (req.location().lonMin() + req.location().lonMax()) / 2.0;
+            loc.setH3Index(h3IndexService.cellForPoint(centerLat, centerLon));
             user.getLocations().add(loc);
         }
 
@@ -66,6 +70,9 @@ public class UserService {
         loc.setLatMax(req.latMax());
         loc.setLonMin(req.lonMin());
         loc.setLonMax(req.lonMax());
+        double centerLat = (req.latMin() + req.latMax()) / 2.0;
+        double centerLon = (req.lonMin() + req.lonMax()) / 2.0;
+        loc.setH3Index(h3IndexService.cellForPoint(centerLat, centerLon));
         userLocationRepository.save(loc);
     }
 
@@ -108,6 +115,7 @@ public class UserService {
         loc.setLatMax(lat + deltaLat);
         loc.setLonMin(lon - deltaLon);
         loc.setLonMax(lon + deltaLon);
+        loc.setH3Index(h3IndexService.cellForPoint(lat, lon));
         userLocationRepository.save(loc);
     }
 
