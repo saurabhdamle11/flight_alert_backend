@@ -157,14 +157,3 @@ src/main/java/com/tracker/
 - **OpenSky backoff**: Exponential on 429 — 5 s → 15 s → 30 s.
 - **Region reload**: Active regions are reloaded from DB every 5 minutes.
 
----
-
-## Running Tests
-
-```bash
-./mvnw test
-```
-
-- Unit tests: bounding box merge, message formatter, state vector parser, heading-to-compass
-- Integration tests: Testcontainers (PostgreSQL + Kafka) — real DB, no mocks
-- Contract tests: Twilio inbound webhook handler
