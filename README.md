@@ -57,7 +57,6 @@ WhatsApp (Twilio Webhook) → User Service → PostgreSQL
 A `docker-compose.yml` at the repo root starts PostgreSQL, Redis, Zookeeper, and Kafka together:
 
 ```bash
-# From the repo root (tracker_backend/)
 docker compose up -d
 ```
 
@@ -72,7 +71,6 @@ This starts:
 > **Note:** Spring Boot 4.1 SNAPSHOT does not auto-run Flyway on startup. Migrations must be applied manually each time the PostgreSQL container is recreated.
 
 ```bash
-# From tracker_backend/tracker_backend/
 for f in src/main/resources/db/migration/V1__create_users.sql \
           src/main/resources/db/migration/V2__create_user_locations.sql \
           src/main/resources/db/migration/V3__create_notifications.sql \
@@ -94,7 +92,6 @@ cp .env.example .env
 ### 4. Run the app
 
 ```bash
-# From tracker_backend/tracker_backend/
 ./mvnw spring-boot:run
 ```
 
