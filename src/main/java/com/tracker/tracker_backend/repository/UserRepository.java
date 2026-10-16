@@ -9,4 +9,5 @@ import java.util.UUID;
 public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByWhatsappNumber(String whatsappNumber);
     boolean existsByWhatsappNumber(String whatsappNumber);
+    Optional<User> findByApiTokenHash(String apiTokenHash);
 }

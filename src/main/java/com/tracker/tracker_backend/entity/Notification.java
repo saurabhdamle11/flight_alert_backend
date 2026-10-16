@@ -42,8 +42,13 @@ public class Notification {
 
     private Double heading;
 
-    @Column(name = "twilio_message_sid", length = 50)
-    private String twilioMessageSid;
+    /** Twilio message SID or the push service's message location, depending on channel. */
+    @Column(name = "provider_message_id", length = 255)
+    private String providerMessageId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private NotificationChannel channel;
 
     @Column(name = "sent_at", nullable = false)
     private Instant sentAt = Instant.now();

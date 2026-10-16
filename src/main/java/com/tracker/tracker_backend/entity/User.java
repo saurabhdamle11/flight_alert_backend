@@ -21,8 +21,13 @@ public class User {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "whatsapp_number", nullable = false, unique = true, length = 20)
+    /** Null for users who registered from the web app. */
+    @Column(name = "whatsapp_number", unique = true, length = 20)
     private String whatsappNumber;
+
+    /** SHA-256 (hex) of the device token issued to web users; null for WhatsApp-only users. */
+    @Column(name = "api_token_hash", unique = true, length = 64)
+    private String apiTokenHash;
 
     @Column(name = "display_name", length = 100)
     private String displayName;

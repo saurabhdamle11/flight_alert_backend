@@ -1,6 +1,6 @@
 # Flight Whisperer Backend
 
-Multi-user flight notification service. Users register with a WhatsApp number and location; the system watches for planes overhead and sends WhatsApp notifications with flight details.
+Multi-user flight notification service. Users register from the web app (browser push notifications) or over WhatsApp with their location; the system watches for planes overhead and notifies them with flight details.
 
 ---
 
@@ -20,7 +20,7 @@ WhatsApp (Twilio Webhook) → User Service → PostgreSQL
                           Kafka: flight.notifications
                                        ↓
                          Notification Service (Kafka consumer)
-                               calls Twilio WhatsApp API
+                    Web Push (VAPID, RFC 8291) and/or Twilio WhatsApp
                                        ↓
                           Kafka: notification.sent  (audit)
 ```
@@ -35,7 +35,7 @@ WhatsApp (Twilio Webhook) → User Service → PostgreSQL
 | Database | PostgreSQL 16 (Flyway migrations, HikariCP) |
 | Deduplication | Redis (TTL-based, 10 min window) |
 | Messaging | Apache Kafka |
-| Notifications | Twilio WhatsApp API |
+| Notifications | Web Push (VAPID / RFC 8291, JDK crypto) · Twilio WhatsApp (optional) |
 | Flight Data | OpenSky Network REST API |
 | Build | Maven (wrapper included) |
 | Packaging | WAR (Tomcat) |
@@ -107,11 +107,36 @@ All config is driven by environment variables. Copy `.env.example` to `.env` to 
 | `OPENSKY_CLIENT_SECRET` | OpenSky OAuth2 API client secret |
 | `OPENSKY_DAILY_CREDITS` | Daily credit budget for polling (default `0` = auto: 3600 with credentials, 360 anonymous) |
 | `OPENSKY_MIN_POLL_INTERVAL_MS` | Fastest allowed poll cycle (default `15000`) |
-| `TWILIO_ACCOUNT_SID` | Twilio account SID |
+| `TWILIO_ACCOUNT_SID` | Twilio account SID (optional — WhatsApp disabled when blank) |
 | `TWILIO_AUTH_TOKEN` | Twilio auth token |
 | `TWILIO_WHATSAPP_FROM` | Twilio WhatsApp sender number (e.g. `whatsapp:+14155238886`) |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Web push key pair, base64url (65-byte uncompressed public, 32-byte private). Web push disabled when blank |
+| `VAPID_SUBJECT` | Contact for push services: `https://…` or `mailto:…` |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated origins of the web app |
+| `ADMIN_API_TOKEN` | Secret for the admin API (`X-Admin-Token`). Admin API is closed when blank |
 
 ---
+
+## Web API (`/api/v1/web`)
+
+Web users are anonymous: `/register` returns a device token once, which the browser stores and sends as `Authorization: Bearer <token>` on every `/me` call.
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | `/vapid-public-key` | — | `applicationServerKey` for `pushManager.subscribe()` |
+| POST | `/register` | — (10/h per IP) | `{displayName?, latitude, longitude, label?}` → `{userId, token}` |
+| GET | `/me` | token | Profile, watch location, number of push devices |
+| PUT | `/me/location` | token | `{latitude, longitude, label?}` — replaces the 25 km watch area |
+| PATCH | `/me/active?active=` | token | Pause / resume alerts |
+| POST | `/me/push-subscriptions` | token | Body = `PushSubscription.toJSON()` |
+| DELETE | `/me/push-subscriptions` | token | `{endpoint}` |
+| POST | `/me/test-notification` | token (5/10 min) | Sends a test push to all the user's browsers |
+| GET | `/me/notifications?limit=` | token | Recent alerts |
+| DELETE | `/me` | token | Delete account and all data |
+
+Push payload (JSON, read by the service worker): `type`, `title`, `body`, `url`, `tag`, `icao24`, `callsign`, `altitudeFt`, `speedKmh`, `heading`, `latitude`, `longitude`, `timestamp`.
+
+The admin API (`/api/v1/users/**`) requires `X-Admin-Token`.
 
 ## Database Schema
 
@@ -119,9 +144,10 @@ Managed by Flyway (`src/main/resources/db/migration/`):
 
 | Table | Purpose |
 |---|---|
-| `users` | UUID PK, WhatsApp number (E.164), display name, active flag |
+| `users` | UUID PK, WhatsApp number (E.164, null for web users), device token hash, display name, active flag |
 | `user_locations` | Per-user bounding boxes (`lat/lon min/max`), supports multiple named locations |
-| `notifications` | Audit log of every Twilio delivery |
+| `push_subscriptions` | Browser push subscriptions (endpoint + p256dh/auth keys), max 10 per user |
+| `notifications` | Audit log of every delivery, one row per channel (`WHATSAPP` / `WEB_PUSH`) |
 | `regions` | Merged bounding boxes used for OpenSky API polling |
 
 Deduplication is handled in Redis (`seen:flight:{user_id}:{icao24}`, TTL 600 s) — no `seen_flights` table.
@@ -154,5 +180,7 @@ src/main/java/com/tracker/
 - **Credit-budgeted polling**: Each region costs 1 credit per poll (boxes ≤ 25 sq°). A poll cycle runs at most every `max(min interval, regions × 86 400 s / daily budget)` — e.g. 1 region → every 24 s, 10 regions → every 4 min on a standard 4 000-credit account.
 - **OpenSky 429**: Requests pause for the server-provided `X-Rate-Limit-Retry-After-Seconds` (non-blocking).
 - **Notification audit**: Every delivered notification is written to `notifications` and published to `notification.sent`.
+- **Multi-channel delivery**: Each alert goes to WhatsApp (if linked) and every registered browser. Expired push subscriptions (404/410) are deleted automatically. An alert goes to the DLQ only if nothing was delivered and a channel failed transiently.
+- **Push endpoint allowlist**: Subscriptions must point at FCM, Mozilla, Apple or WNS push services over HTTPS (prevents SSRF).
 - **Region reload**: Active regions are reloaded from DB every 5 minutes.
 

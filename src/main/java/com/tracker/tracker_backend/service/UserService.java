@@ -1,18 +1,27 @@
 package com.tracker.tracker_backend.service;
 
 import com.tracker.tracker_backend.dto.CreateUserRequest;
+import com.tracker.tracker_backend.dto.MeResponse;
+import com.tracker.tracker_backend.dto.NotificationView;
+import com.tracker.tracker_backend.dto.WebRegisterRequest;
+import com.tracker.tracker_backend.dto.WebRegisterResponse;
 import com.tracker.tracker_backend.dto.UpdateLocationRequest;
 import com.tracker.tracker_backend.dto.UserResponse;
 import com.tracker.tracker_backend.entity.User;
 import com.tracker.tracker_backend.entity.UserLocation;
 import com.tracker.tracker_backend.exception.DuplicateWhatsappNumberException;
 import com.tracker.tracker_backend.exception.UserNotFoundException;
+import com.tracker.tracker_backend.repository.NotificationRepository;
+import com.tracker.tracker_backend.repository.PushSubscriptionRepository;
 import com.tracker.tracker_backend.repository.UserLocationRepository;
 import com.tracker.tracker_backend.repository.UserRepository;
+import com.tracker.tracker_backend.security.ApiTokens;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -23,6 +32,10 @@ public class UserService {
     private final UserRepository userRepository;
     private final UserLocationRepository userLocationRepository;
     private final H3IndexService h3IndexService;
+    private final PushSubscriptionRepository pushSubscriptionRepository;
+    private final NotificationRepository notificationRepository;
+
+    private static final double DEFAULT_RADIUS_KM = 25.0;
 
     @Transactional
     public UserResponse createUser(CreateUserRequest req) {
@@ -103,28 +116,78 @@ public class UserService {
     }
 
     /**
+     * Creates an anonymous web user with a ~25 km watch area around the given point.
+     * Returns the device token, which is only ever available in this response.
+     */
+    @Transactional
+    public WebRegisterResponse registerWebUser(WebRegisterRequest req) {
+        String token = ApiTokens.generate();
+        User user = new User();
+        user.setDisplayName(req.displayName());
+        user.setApiTokenHash(ApiTokens.hash(token));
+        user.getLocations().add(pointLocation(user, req.latitude(), req.longitude(), labelOrHome(req.label())));
+        user = userRepository.save(user);
+        return new WebRegisterResponse(user.getId(), token);
+    }
+
+    /**
      * Replaces the user's active location(s) with a ~25 km box around the given point.
      * Deactivation and insert happen in one transaction so the old rows are actually flushed.
      */
     @Transactional
-    public void replaceLocationFromPoint(UUID userId, double lat, double lon) {
+    public void replaceLocationFromPoint(UUID userId, double lat, double lon, String label) {
         User user = findActive(userId);
         userLocationRepository.findByUserIdAndActiveTrue(userId)
                 .forEach(l -> l.setActive(false));
+        userLocationRepository.save(pointLocation(user, lat, lon, labelOrHome(label)));
+    }
 
-        // ~25 km radius bounding box
-        double deltaLat = 25.0 / 111.0;
-        double deltaLon = 25.0 / (111.0 * Math.cos(Math.toRadians(lat)));
+    @Transactional(readOnly = true)
+    public MeResponse me(UUID userId) {
+        User user = findActive(userId);
+        MeResponse.Location location = userLocationRepository.findByUserIdAndActiveTrue(userId).stream()
+                .findFirst()
+                .map(l -> new MeResponse.Location(
+                        l.getLabel(),
+                        (l.getLatMin() + l.getLatMax()) / 2.0,
+                        (l.getLonMin() + l.getLonMax()) / 2.0,
+                        DEFAULT_RADIUS_KM))
+                .orElse(null);
+        return new MeResponse(user.getId(), user.getDisplayName(), user.isActive(), location,
+                pushSubscriptionRepository.countByUserId(userId), user.getWhatsappNumber() != null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<NotificationView> recentNotifications(UUID userId, int limit) {
+        return notificationRepository.findByUserIdOrderBySentAtDesc(userId, PageRequest.of(0, limit)).stream()
+                .map(n -> new NotificationView(
+                        n.getIcao24(),
+                        n.getCallsign(),
+                        n.getAltitudeM() != null ? Math.round(n.getAltitudeM() * 3.28084) : null,
+                        n.getSpeedMs() != null ? Math.round(n.getSpeedMs() * 3.6) : null,
+                        n.getHeading() != null ? NotificationFormatter.toCompass(n.getHeading()) : null,
+                        n.getChannel().name(),
+                        n.getSentAt()))
+                .toList();
+    }
+
+    private UserLocation pointLocation(User user, double lat, double lon, String label) {
+        double deltaLat = DEFAULT_RADIUS_KM / 111.0;
+        double deltaLon = DEFAULT_RADIUS_KM / (111.0 * Math.cos(Math.toRadians(lat)));
 
         UserLocation loc = new UserLocation();
         loc.setUser(user);
-        loc.setLabel("home");
+        loc.setLabel(label);
         loc.setLatMin(lat - deltaLat);
         loc.setLatMax(lat + deltaLat);
         loc.setLonMin(lon - deltaLon);
         loc.setLonMax(lon + deltaLon);
         loc.setH3Index(h3IndexService.cellForPoint(lat, lon));
-        userLocationRepository.save(loc);
+        return loc;
+    }
+
+    private static String labelOrHome(String label) {
+        return label == null || label.isBlank() ? "home" : label.strip();
     }
 
     // -------------------------------------------------------------------------
