@@ -31,8 +31,8 @@ WhatsApp (Twilio Webhook) → User Service → PostgreSQL
 
 | Layer | Technology |
 |---|---|
-| Language / Framework | Java 17, Spring Boot 4.1 |
-| Database | PostgreSQL 15 (Flyway migrations, HikariCP) |
+| Language / Framework | Java 17, Spring Boot 4.1.1 |
+| Database | PostgreSQL 16 (Flyway migrations, HikariCP) |
 | Deduplication | Redis (TTL-based, 10 min window) |
 | Messaging | Apache Kafka |
 | Notifications | Twilio WhatsApp API |
@@ -66,19 +66,11 @@ This starts:
 - Zookeeper on port 2181
 - Kafka on port 9092
 
-### 2. Run Flyway migrations
+### 2. Database migrations
 
-> **Note:** Spring Boot 4.1 SNAPSHOT does not auto-run Flyway on startup. Migrations must be applied manually each time the PostgreSQL container is recreated.
+Flyway runs automatically on startup (`spring-boot-starter-flyway`), so no manual step is needed.
 
-```bash
-for f in src/main/resources/db/migration/V1__create_users.sql \
-          src/main/resources/db/migration/V2__create_user_locations.sql \
-          src/main/resources/db/migration/V3__create_notifications.sql \
-          src/main/resources/db/migration/V4__create_regions.sql \
-          src/main/resources/db/migration/V5__add_h3_index_to_user_locations.sql; do
-  docker exec -i tracker_backend-postgres-1 psql -U tracker -d flight_whisperer < "$f"
-done
-```
+> **Existing databases migrated by hand:** if V1–V5 were applied manually there is no `flyway_schema_history` table yet. Start the app once with `SPRING_FLYWAY_BASELINE_ON_MIGRATE=true SPRING_FLYWAY_BASELINE_VERSION=5` so Flyway records V1–V5 as applied and only runs V6+.
 
 ### 3. Configure environment
 
@@ -111,6 +103,10 @@ All config is driven by environment variables. Copy `.env.example` to `.env` to 
 | `REDIS_HOST` | Redis host |
 | `REDIS_PORT` | Redis port |
 | `KAFKA_BOOTSTRAP_SERVERS` | Kafka broker address (default: `localhost:9092`) |
+| `OPENSKY_CLIENT_ID` | OpenSky OAuth2 API client ID (optional — anonymous if blank) |
+| `OPENSKY_CLIENT_SECRET` | OpenSky OAuth2 API client secret |
+| `OPENSKY_DAILY_CREDITS` | Daily credit budget for polling (default `0` = auto: 3600 with credentials, 360 anonymous) |
+| `OPENSKY_MIN_POLL_INTERVAL_MS` | Fastest allowed poll cycle (default `15000`) |
 | `TWILIO_ACCOUNT_SID` | Twilio account SID |
 | `TWILIO_AUTH_TOKEN` | Twilio auth token |
 | `TWILIO_WHATSAPP_FROM` | Twilio WhatsApp sender number (e.g. `whatsapp:+14155238886`) |
@@ -154,6 +150,9 @@ src/main/java/com/tracker/
 - **On-ground filter**: Flights with `on_ground == true` are discarded; `null` (unknown) is kept.
 - **Default radius**: When a user shares a location via WhatsApp, a ~25 km bounding box is auto-generated.
 - **Adaptive polling**: Poll frequency per region is reduced during overnight hours (2–5 AM local time).
-- **OpenSky backoff**: Exponential on 429 — 5 s → 15 s → 30 s.
+- **OpenSky auth**: OAuth2 client credentials (Basic auth is no longer accepted by OpenSky). Create an API client in your OpenSky account page.
+- **Credit-budgeted polling**: Each region costs 1 credit per poll (boxes ≤ 25 sq°). A poll cycle runs at most every `max(min interval, regions × 86 400 s / daily budget)` — e.g. 1 region → every 24 s, 10 regions → every 4 min on a standard 4 000-credit account.
+- **OpenSky 429**: Requests pause for the server-provided `X-Rate-Limit-Retry-After-Seconds` (non-blocking).
+- **Notification audit**: Every delivered notification is written to `notifications` and published to `notification.sent`.
 - **Region reload**: Active regions are reloaded from DB every 5 minutes.
 

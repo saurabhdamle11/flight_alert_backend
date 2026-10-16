@@ -15,12 +15,19 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.List;
 
 /**
- * Polls the OpenSky Network API on a fixed schedule, once per active merged region.
+ * Polls the OpenSky Network API once per active merged region.
+ *
+ * Budget-aware scheduling: the scheduler ticks every {@code opensky.min-poll-interval-ms},
+ * but a poll cycle only runs when enough time has passed for the cycle's credit cost to
+ * fit inside the daily OpenSky budget. With N one-credit regions and a budget of B
+ * credits/day, cycles run at most every max(minInterval, N * 86 400 s / B).
  *
  * For each region:
  *   - Skip if the region's local time is in the overnight window (default 2–5 AM)
@@ -49,27 +56,38 @@ public class FlightIngestionService {
     @Value("${opensky.overnight-end-hour:5}")
     private int overnightEnd;
 
-    @Scheduled(fixedDelayString = "${opensky.poll-interval-ms:10000}")
+    @Value("${opensky.min-poll-interval-ms:15000}")
+    private long minPollIntervalMs;
+
+    // 0 = auto: 90% of the standard (4 000) or anonymous (400) daily quota
+    @Value("${opensky.daily-credit-budget:0}")
+    private int dailyCreditBudget;
+
+    private Instant lastCycleAt = Instant.EPOCH;
+
+    @Scheduled(fixedDelayString = "${opensky.min-poll-interval-ms:15000}")
     public void poll() {
-        List<Region> regions = regionRepository.findAll();
+        List<Region> regions = regionRepository.findAll().stream()
+                .filter(r -> !isOvernightForRegion(r))
+                .toList();
 
         if (regions.isEmpty()) {
-            log.debug("No active regions to poll");
+            log.debug("No active (non-overnight) regions to poll");
             return;
         }
 
-        log.info("Polling {} region(s)", regions.size());
+        int cycleCost = regions.stream().mapToInt(r -> OpenSkyClient.creditCost(toBox(r))).sum();
+        Duration interval = cycleInterval(cycleCost);
+        if (Instant.now().isBefore(lastCycleAt.plus(interval))) {
+            return;
+        }
+        lastCycleAt = Instant.now();
+
+        log.info("Polling {} region(s) — cycle cost {} credit(s), interval {}s",
+                regions.size(), cycleCost, interval.toSeconds());
 
         for (Region region : regions) {
-            if (isOvernightForRegion(region)) {
-                log.debug("Skipping overnight region {}", region.getId());
-                continue;
-            }
-
-            BoundingBox box = new BoundingBox(
-                    region.getLatMin(), region.getLatMax(),
-                    region.getLonMin(), region.getLonMax()
-            );
+            BoundingBox box = toBox(region);
 
             OpenSkyResponse response = openSkyClient.fetchStates(box);
             if (response == null || response.states() == null) {
@@ -110,6 +128,18 @@ public class FlightIngestionService {
 
             log.info("Region {} → {} airborne flights published", region.getId(), published);
         }
+    }
+
+    private Duration cycleInterval(int cycleCost) {
+        int budget = dailyCreditBudget > 0
+                ? dailyCreditBudget
+                : (openSkyClient.isAuthenticated() ? 3_600 : 360);
+        long budgetMs = (long) Math.ceil(cycleCost * 86_400_000.0 / budget);
+        return Duration.ofMillis(Math.max(minPollIntervalMs, budgetMs));
+    }
+
+    private static BoundingBox toBox(Region region) {
+        return new BoundingBox(region.getLatMin(), region.getLatMax(), region.getLonMin(), region.getLonMax());
     }
 
     /**

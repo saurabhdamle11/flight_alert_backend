@@ -119,10 +119,13 @@ public class SubscriptionMatcherService {
                             if (ex != null) {
                                 log.error("Failed to publish notification for user={} icao24={}: {}",
                                         userId, update.icao24(), ex.getMessage());
+                                // Release the dedup key so the next poll can retry this notification
+                                redisTemplate.delete(dedupKey);
                             }
                         });
             } catch (JsonProcessingException e) {
                 log.error("Failed to serialize FlightNotificationMessage for user={}: {}", userId, e.getMessage());
+                redisTemplate.delete(dedupKey);
             }
         }
     }

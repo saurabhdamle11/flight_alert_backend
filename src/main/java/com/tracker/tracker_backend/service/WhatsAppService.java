@@ -19,9 +19,10 @@ public class WhatsAppService {
     /**
      * @param toNumber E.164 number of the recipient, e.g. "+919876543210"
      * @param text     Message body to send
+     * @return Twilio message SID
      */
-    public void sendMessage(String toNumber, String text) {
+    public String sendMessage(String toNumber, String text) {
         String to = toNumber.startsWith("whatsapp:") ? toNumber : "whatsapp:" + toNumber;
-        Message.creator(new PhoneNumber(to), new PhoneNumber(fromNumber.strip()), text).create();
+        return Message.creator(new PhoneNumber(to), new PhoneNumber(fromNumber.strip()), text).create().getSid();
     }
 }

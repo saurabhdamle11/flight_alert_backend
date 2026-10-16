@@ -102,8 +102,16 @@ public class UserService {
         return userRepository.save(user);
     }
 
+    /**
+     * Replaces the user's active location(s) with a ~25 km box around the given point.
+     * Deactivation and insert happen in one transaction so the old rows are actually flushed.
+     */
     @Transactional
-    public void addLocationFromPoint(User user, double lat, double lon) {
+    public void replaceLocationFromPoint(UUID userId, double lat, double lon) {
+        User user = findActive(userId);
+        userLocationRepository.findByUserIdAndActiveTrue(userId)
+                .forEach(l -> l.setActive(false));
+
         // ~25 km radius bounding box
         double deltaLat = 25.0 / 111.0;
         double deltaLon = 25.0 / (111.0 * Math.cos(Math.toRadians(lat)));

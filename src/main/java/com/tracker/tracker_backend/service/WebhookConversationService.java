@@ -81,10 +81,7 @@ public class WebhookConversationService {
 
         // If user shared a location pin (Latitude/Longitude params from Twilio)
         if (latitude != null && longitude != null) {
-            // Deactivate existing locations before saving the new one
-            userLocationRepository.findByUserIdAndActiveTrue(user.getId())
-                    .forEach(l -> l.setActive(false));
-            userService.addLocationFromPoint(user, latitude, longitude);
+            userService.replaceLocationFromPoint(user.getId(), latitude, longitude);
             log.info("Saved location ({}, {}) for user {}", latitude, longitude, user.getId());
             whatsAppService.sendMessage(from, MSG_LOCATION_SAVED);
             return;
