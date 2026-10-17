@@ -84,6 +84,9 @@ class WebPushCryptoTest {
         String[] parts = jwt.split("\\.");
         String claims = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
         assertThat(claims).contains("\"aud\":\"https://fcm.googleapis.com\"").contains("\"sub\":\"https://flights.example.com\"");
+        long exp = Long.parseLong(claims.replaceAll(".*\"exp\":(\\d+).*", "$1"));
+        // Apple rejects tokens older than ~1 h, so JWTs must be short-lived
+        assertThat(exp - java.time.Instant.now().getEpochSecond()).isBetween(3500L, 3600L);
 
         Signature verifier = Signature.getInstance("SHA256withECDSAinP1363Format");
         verifier.initVerify(kp.getPublic());

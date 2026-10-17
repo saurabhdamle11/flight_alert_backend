@@ -14,12 +14,15 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Builds the VAPID (RFC 8292) Authorization header: an ES256 JWT scoped to the
  * push service origin, plus the application server public key.
- * JWTs are cached per origin and re-signed before they expire.
+ *
+ * JWTs are short-lived: Apple's push service rejects tokens older than about an hour
+ * with 403 ExpiredProviderToken (FCM/Mozilla accept up to 24 h). Each JWT is valid for
+ * 1 h, cached per origin and re-signed once it is 30 min old.
  */
 public class VapidSigner {
 
-    private static final Duration JWT_LIFETIME = Duration.ofHours(12);
-    private static final Duration REFRESH_BEFORE = Duration.ofHours(1);
+    private static final Duration JWT_LIFETIME = Duration.ofHours(1);
+    private static final Duration REFRESH_BEFORE = Duration.ofMinutes(30);
 
     private final ECPrivateKey privateKey;
     private final String publicKeyB64;
@@ -41,6 +44,11 @@ public class VapidSigner {
 
     public String authorizationHeader(String endpoint) {
         return "vapid t=" + jwtFor(audience(endpoint)) + ", k=" + publicKeyB64;
+    }
+
+    /** Drops the cached JWT for this endpoint's push service so the next call re-signs. */
+    public void invalidate(String endpoint) {
+        cache.remove(audience(endpoint));
     }
 
     String jwtFor(String audience) {

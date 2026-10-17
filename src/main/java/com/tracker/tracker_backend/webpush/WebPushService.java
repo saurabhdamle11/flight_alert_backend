@@ -77,6 +77,18 @@ public class WebPushService {
         byte[] body = WebPushCrypto.encrypt(payload,
                 WebPushCrypto.b64urlDecode(sub.getP256dh()), WebPushCrypto.b64urlDecode(sub.getAuth()));
 
+        SendResult result = post(sub, body);
+        if (result.outcome() == Outcome.REJECTED && (result.status() == 401 || result.status() == 403)) {
+            // Push service rejected our VAPID JWT (e.g. Apple ExpiredProviderToken): re-sign and retry once
+            log.info("Push service {} rejected VAPID token (HTTP {}) — re-signing and retrying",
+                    VapidSigner.audience(sub.getEndpoint()), result.status());
+            signer.invalidate(sub.getEndpoint());
+            result = post(sub, body);
+        }
+        return result;
+    }
+
+    private SendResult post(PushSubscription sub, byte[] body) {
         HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(sub.getEndpoint()))
                 .timeout(Duration.ofSeconds(15))
                 .header("Authorization", signer.authorizationHeader(sub.getEndpoint()))
