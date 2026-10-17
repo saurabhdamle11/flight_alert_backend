@@ -20,7 +20,11 @@ import java.time.Duration;
 @Service
 public class WebPushService {
 
-    public enum Outcome { SENT, GONE, FAILED }
+    /**
+     * SENT: accepted by the push service. GONE: subscription expired (404/410).
+     * REJECTED: permanent 4xx — retrying won't help. FAILED: transient (429, 5xx, network).
+     */
+    public enum Outcome { SENT, GONE, REJECTED, FAILED }
 
     public record SendResult(Outcome outcome, int status, String messageId) {}
 
@@ -62,10 +66,11 @@ public class WebPushService {
     }
 
     /**
-     * @param topic optional; a newer message with the same topic replaces an undelivered older one
-     *              (≤ 32 chars, URL-safe base64 alphabet)
+     * No Topic header is sent: Apple rejects topics other push services accept
+     * (e.g. containing '-') with 400 BadWebPushTopic. Duplicate alerts are already
+     * prevented by the matcher's Redis dedup, and the notification tag collapses them on-device.
      */
-    public SendResult send(PushSubscription sub, byte[] payload, String topic) {
+    public SendResult send(PushSubscription sub, byte[] payload) {
         if (!isEnabled()) {
             throw new IllegalStateException("Web push is not configured");
         }
@@ -80,9 +85,6 @@ public class WebPushService {
                 .header("TTL", String.valueOf(ttlSeconds))
                 .header("Urgency", "high")
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body));
-        if (topic != null) {
-            req.header("Topic", topic);
-        }
 
         try {
             HttpResponse<String> res = http.send(req.build(), HttpResponse.BodyHandlers.ofString());
@@ -95,7 +97,8 @@ public class WebPushService {
             }
             log.warn("Push service {} returned {}: {}", VapidSigner.audience(sub.getEndpoint()), status,
                     res.body().length() > 300 ? res.body().substring(0, 300) : res.body());
-            return new SendResult(Outcome.FAILED, status, null);
+            boolean transientError = status == 429 || status >= 500;
+            return new SendResult(transientError ? Outcome.FAILED : Outcome.REJECTED, status, null);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return new SendResult(Outcome.FAILED, 0, null);

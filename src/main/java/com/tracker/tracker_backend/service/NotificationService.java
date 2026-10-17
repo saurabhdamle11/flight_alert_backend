@@ -31,7 +31,8 @@ import java.util.UUID;
  *
  * Push subscriptions the push service reports as gone (404/410) are deleted.
  * The message is routed to {@code flight.notifications.dlq} only when nothing was
- * delivered and at least one channel failed transiently — partial success is not
+ * delivered and at least one channel failed transiently (429/5xx/network; permanent 4xx
+ * rejections are logged, not retried) — partial success is not
  * retried, so users never receive duplicates.
  *
  * Every successful delivery is written to the {@code notifications} table (one row
@@ -90,7 +91,7 @@ public class NotificationService {
             }
         }
 
-        PushDelivery push = deliverPush(message.userId(), formatter.pushPayload(message), "flight-" + message.icao24());
+        PushDelivery push = deliverPush(message.userId(), formatter.pushPayload(message));
         if (push.sent() > 0) {
             recordSent(message, NotificationChannel.WEB_PUSH, push.firstMessageId());
             delivered++;
@@ -108,12 +109,12 @@ public class NotificationService {
 
     /** Sends a test notification to all of the user's browsers. */
     public PushDelivery sendTestPush(UUID userId) {
-        return deliverPush(userId, formatter.testPushPayload(), "test");
+        return deliverPush(userId, formatter.testPushPayload());
     }
 
     public record PushDelivery(int sent, int failed, int removed, String firstMessageId) {}
 
-    private PushDelivery deliverPush(UUID userId, Map<String, Object> payload, String topic) {
+    private PushDelivery deliverPush(UUID userId, Map<String, Object> payload) {
         if (!webPushService.isEnabled()) {
             return new PushDelivery(0, 0, 0, null);
         }
@@ -132,7 +133,7 @@ public class NotificationService {
         int sent = 0, failed = 0, removed = 0;
         String firstMessageId = null;
         for (PushSubscription sub : subscriptions) {
-            WebPushService.SendResult result = webPushService.send(sub, body, topic);
+            WebPushService.SendResult result = webPushService.send(sub, body);
             switch (result.outcome()) {
                 case SENT -> {
                     sent++;
@@ -146,6 +147,8 @@ public class NotificationService {
                     log.info("Removed expired push subscription {} for user={} (HTTP {})",
                             sub.getId(), userId, result.status());
                 }
+                case REJECTED -> log.error("Push to subscription {} for user={} permanently rejected (HTTP {})",
+                        sub.getId(), userId, result.status());
                 case FAILED -> failed++;
             }
         }
